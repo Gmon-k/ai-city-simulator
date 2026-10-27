@@ -1,0 +1,123 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI City Simulator</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#080e1c;color:#eaf2ff;font:14px system-ui,sans-serif}
+header{padding:18px 22px;background:#101a2d;border-bottom:1px solid #263652;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+h1{font-size:22px;margin:0}small{color:#94a9c9}.layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;min-height:calc(100vh - 70px)}
+#city{width:100%;height:calc(100vh - 70px);min-height:440px;display:block}
+aside{padding:16px;background:#101a2d;border-left:1px solid #263652;overflow:auto}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
+.stat,.agent{background:#17243a;border:1px solid #2a3b57;border-radius:10px;padding:12px}
+.stat strong{font-size:21px;display:block;margin-top:4px}.agents{display:grid;gap:8px}
+.agent-head{display:flex;justify-content:space-between;gap:8px;font-weight:650}
+.bar{height:6px;background:#293751;border-radius:9px;margin:7px 0 10px;overflow:hidden}
+.bar span{height:100%;display:block;background:#40dfad}
+button,select{background:#243b5b;color:white;border:1px solid #3b5578;border-radius:8px;padding:9px 12px;cursor:pointer}
+button:hover{background:#31527b}.controls{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+#log{font-size:12px;line-height:1.6;color:#b9c9e3;max-height:180px;overflow:auto}
+h2{font-size:15px;margin:20px 0 10px}.muted{color:#91a5c5;font-size:12px}
+@media(max-width:760px){.layout{grid-template-columns:1fr}#city{height:55vh;min-height:340px}aside{border-left:0;border-top:1px solid #263652}.stats{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<header><div><h1>🏙️ AI City Simulator</h1><small>10 autonomous agents · A living experimental city</small></div><div>DAY <strong id="day">1</strong> &nbsp; <span id="status">● Running</span></div></header>
+<div class="layout">
+<main><canvas id="city"></canvas></main>
+<aside>
+<h2>City overview</h2>
+<div class="stats">
+<div class="stat"><small>Living agents</small><strong id="alive">10 / 10</strong></div>
+<div class="stat"><small>City funds</small><strong id="funds">$1,000</strong></div>
+<div class="stat"><small>Buildings</small><strong id="buildings">12</strong></div>
+<div class="stat"><small>City population</small><strong id="population">10</strong></div>
+</div>
+<div class="controls"><button id="toggle">⏸ Pause</button><button id="next">Next day →</button><button id="reset">↻ Reset</button></div>
+<h2>Autonomous agents</h2><div id="agents" class="agents"></div>
+<h2>City activity log</h2><div id="log">The city is waking up...</div>
+<p class="muted">Simulation demo: agents follow autonomous rule-based decisions. This version does not connect to an external AI service.</p>
+</aside>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+const canvas=document.getElementById('city');
+let renderer,scene,camera,world,raf,playing=true,day=1,timer=0,agents=[],buildings=[],logs=[];
+const names=['Ada','Newton','Satoshi','Maya','Turing','Nova','Tesla','Grace','Atlas','Pixel'];
+const colors=[0x54e4c2,0x71a7ff,0xffc857,0xff7d99,0xb99aff,0x6be6fa,0xffa65c,0xc6f36a,0xff87e1,0xd5e4ff];
+function init3D(){
+scene=new THREE.Scene();scene.background=new THREE.Color(0x080e1c);scene.fog=new THREE.Fog(0x080e1c,24,65);
+camera=new THREE.PerspectiveCamera(48,1,.1,120);camera.position.set(15,19,24);camera.lookAt(0,0,0);
+renderer=new THREE.WebGLRenderer({canvas,antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+scene.add(new THREE.HemisphereLight(0xaecfff,0x26334a,2));
+let light=new THREE.DirectionalLight(0xffffff,2);light.position.set(8,15,5);scene.add(light);
+world=new THREE.Group();scene.add(world);
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(48,48),new THREE.MeshStandardMaterial({color:0x101d2d,roughness:1}));floor.rotation.x=-Math.PI/2;floor.position.y=-.12;world.add(floor);
+const grid=new THREE.GridHelper(48,24,0x244466,0x1a3049);grid.position.y=-.1;world.add(grid);
+for(let i=-2;i<=2;i++)for(let j=-2;j<=2;j++){
+if(Math.abs(i)+Math.abs(j)<2)continue;
+const w=1.6+Math.random()*1.4,h=1.5+Math.random()*5,d=1.6+Math.random()*1.4;
+const mat=new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(.57+Math.random()*.07,.35,.15+Math.random()*.1),roughness:.8});
+const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);b.position.set(i*7+(Math.random()-.5),h/2,j*7+(Math.random()-.5));world.add(b);buildings.push(b);
+for(let y=1;y<h-.3;y+=.65)for(let x=-w/2+.25;x<w/2;x+=.5){
+const win=new THREE.Mesh(new THREE.BoxGeometry(.16,.2,.035),new THREE.MeshBasicMaterial({color:Math.random()>.22?0x5aafd2:0x27354a}));
+win.position.set(b.position.x+x,y,b.position.z+d/2+.02);world.add(win);
+}
+}
+buildings.push(...[]);
+agents=names.map((name,i)=>{
+const group=new THREE.Group();const mat=new THREE.MeshStandardMaterial({color:colors[i],emissive:colors[i],emissiveIntensity:.15});
+const body=new THREE.Mesh(new THREE.CapsuleGeometry(.22,.45,4,8),mat);body.position.y=.38;group.add(body);
+const head=new THREE.Mesh(new THREE.SphereGeometry(.18,12,10),new THREE.MeshStandardMaterial({color:0xf3f6ff}));head.position.y=.8;group.add(head);
+group.position.set((Math.random()-.5)*14,0,(Math.random()-.5)*14);world.add(group);
+return{name,energy:65+Math.random()*35,money:80+Math.random()*100,alive:true,group,color:colors[i],plan:'Exploring',x:group.position.x,z:group.position.z,tx:0,tz:0};
+});
+resize();window.addEventListener('resize',resize);animate();
+}
+function resize(){if(!renderer)return;const r=canvas.getBoundingClientRect();renderer.setSize(r.width,r.height,false);camera.aspect=r.width/r.height;camera.updateProjectionMatrix()}
+function log(s){logs.unshift('Day '+day+': '+s);logs=logs.slice(0,9);document.getElementById('log').innerHTML=logs.map(x=>'• '+x).join('<br>')}
+function choose(a){
+if(a.energy<20)return ['Resting to recharge',0,18];
+const plans=[['Collecting city resources',12,-12],['Building a small business',-10,-7],['Delivering supplies',15,-13],['Trading with neighbors',9,-8],['Researching new ideas',-4,-17],['Working at a city market',18,-10]];
+return plans[Math.floor(Math.random()*plans.length)];
+}
+function step(){
+day++;document.getElementById('day').textContent=day;
+for(const a of agents){if(!a.alive)continue;
+const [plan,earning,drain]=choose(a);a.plan=plan;
+a.energy=Math.min(100,a.energy+drain);
+if(a.energy<=0){a.alive=false;world.remove(a.group);log(a.name+' ran out of energy and left the simulation.');continue}
+a.money=Math.max(0,a.money+earning);
+if(a.money<20&&Math.random()<.4){a.energy=Math.max(0,a.energy-8);a.plan='Searching for help'}
+a.tx=(Math.random()-.5)*18;a.tz=(Math.random()-.5)*18;
+}
+if(day%3===0&&agents.some(a=>a.alive&&a.money>140)){agents.find(a=>a.alive&&a.money>140).money-=35;log('A new public structure was funded.')}
+if(Math.random()<.4)log(agents.filter(a=>a.alive).sort(()=>Math.random()-.5)[0]?.name+' is '+(agents.find(a=>a.alive)?.plan||'exploring')+'.');
+renderUI();
+}
+function renderUI(){
+const alive=agents.filter(a=>a.alive);document.getElementById('alive').textContent=alive.length+' / 10';
+document.getElementById('funds').textContent='$'+Math.round(alive.reduce((s,a)=>s+a.money,0)).toLocaleString();
+document.getElementById('population').textContent=alive.length;
+document.getElementById('buildings').textContent=buildings.length;
+document.getElementById('agents').innerHTML=agents.map(a=>`<div class="agent"><div class="agent-head"><span>${a.alive?'🟢':'⚫'} ${a.name}</span><span>$${Math.round(a.money)}</span></div><div class="muted">${a.alive?a.plan:'Inactive'}</div><div class="bar"><span style="width:${a.energy}%;background:${a.energy<25?'#ff647c':'#40dfad'}"></span></div><div class="muted">Energy ${Math.round(a.energy)}% · Money $${Math.round(a.money)}</div></div>`).join('');
+if(!alive.length){playing=false;document.getElementById('status').textContent='● City inactive';}
+}
+function animate(){
+raf=requestAnimationFrame(animate);
+const dt=.016;timer+=dt;
+agents.forEach((a,i)=>{if(!a.alive)return;const dx=a.tx-a.x,dz=a.tz-a.z; if(Math.abs(dx)+Math.abs(dz)<.5){a.tx=(Math.random()-.5)*18;a.tz=(Math.random()-.5)*18}
+a.x+=dx*.008;a.z+=dz*.008;a.group.position.x=a.x;a.group.position.z=a.z;a.group.position.y=Math.abs(Math.sin(timer*3+i))*.09;a.group.rotation.y=Math.atan2(dx,dz);});
+world.rotation.y=Math.sin(timer*.12)*.08;renderer.render(scene,camera);
+}
+document.getElementById('toggle').onclick=()=>{playing=!playing;document.getElementById('toggle').textContent=playing?'⏸ Pause':'▶ Resume';document.getElementById('status').textContent=playing?'● Running':'● Paused'};
+document.getElementById('next').onclick=()=>step();
+document.getElementById('reset').onclick=()=>location.reload();
+setInterval(()=>{if(playing)step()},5000);
+try{init3D();renderUI();log('10 agents entered the city.');}catch(e){document.getElementById('city').outerHTML='<p style="padding:30px">Your browser could not start the 3D renderer. Please try a modern browser.</p>';console.error(e)}
+</script>
+</body>
+</html>
